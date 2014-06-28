@@ -104,7 +104,7 @@ $(function() {
 				$select.show();
 			} else {
 				$select.hide().val('')
-				//.change()                      // FIXME 1～2フレームでX以外を選択すると Maximum call stack size exceeded エラーで落ちる。 ここをコメントアウトすると挙動はイマイチいなるが落ちなくなる
+				.change()                      // FIXME 1～2フレームでX以外を選択すると Maximum call stack size exceeded エラーで落ちる。 ここをコメントアウトすると挙動はイマイチいなるが落ちなくなる
 				;
 			}
 		};
