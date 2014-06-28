@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>bacon(仮)</title>
+<meta charset="UTF-8">
+<style type="text/css">
+	#input td {
+		width: 6em;
+		white-space: nowrap;
+	}
+</style>
+</head>
+<body>
+
+<table border="1">
+	<tr>
+		<th>1</th>
+		<th>2</th>
+		<th>3</th>
+		<th>4</th>
+		<th>5</th>
+		<th>6</th>
+		<th>7</th>
+		<th>8</th>
+		<th>9</th>
+		<th>10</th>
+	</tr>
+	<tr id="input">
+		<td> <select id="frame1_left"></select> <select id="frame1_right"></select> </td>
+		<td> <select id="frame2_left"></select> <select id="frame2_right"></select> </td>
+		<td> <select id="frame3_left"></select> <select id="frame3_right"></select> </td>
+		<td> <select id="frame4_left"></select> <select id="frame4_right"></select> </td>
+		<td> <select id="frame5_left"></select> <select id="frame5_right"></select> </td>
+		<td> <select id="frame6_left"></select> <select id="frame6_right"></select> </td>
+		<td> <select id="frame7_left"></select> <select id="frame7_right"></select> </td>
+		<td> <select id="frame8_left"></select> <select id="frame8_right"></select> </td>
+		<td> <select id="frame9_left"></select> <select id="frame9_right"></select> </td>
+		<td> <select id="frame10_left"></select> <select id="frame10_right"></select> <select id="frame10_final"></select> </td>
+	</tr>
+	<tr id="score" style="height:1.2em;">
+		<td id="score1"></td>
+		<td id="score2"></td>
+		<td id="score3"></td>
+		<td id="score4"></td>
+		<td id="score5"></td>
+		<td id="score6"></td>
+		<td id="score7"></td>
+		<td id="score8"></td>
+		<td id="score9"></td>
+		<td id="score10"></td>
+	</tr>
+</table>
+
+
+<button id="clear">初期化</button>
+
+<script type="text/javascript" src="jquery-1.11.0.js"></script>
+<script type="text/javascript" src="bacon.js"></script>
+<script type="text/javascript">
+$(function() {
+	var range = function(start, end) {
+		var result = [];
+		var i;
+		for (i = start; i <= end; i += 1) {
+			result.push(i);
+		}
+		return result;
+	};
+	
+	var NORMAL_OPTIONS = ['', 'G', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'X'];
+	
+	var updateOptions = function($select, values) {
+		$select.children().remove();
+		$select.append($.map(values, function(x) {
+			return $('<option></option>').val(x).text(x);
+		}));
+	};
+	
+	var _createUpdateRightOptions = function($select) {
+		return function(x) {
+			var score = (x === 'G') ? 0 : parseInt(x, 10);
+			var values = ['', '-']
+				.concat(range(1, 9 - score))
+				.concat('/')
+				;
+			updateOptions($select, values);
+		};
+	};
+	
+	var _getSelectProperty = function($select) {
+		var getVal = function() {
+			return $select.val();
+		};
+		return $select
+			.asEventStream('change')
+			.map(getVal)
+			.toProperty(getVal)
+		;
+	};
+	
+	var _enableSelect = function($select, enabledProperty) {
+		return function(enabled) {
+			if (enabled) {
+				$select.show();
+			} else {
+				$select.hide().val('')
+				//.change()                      // FIXME 1～2フレームでX以外を選択すると Maximum call stack size exceeded エラーで落ちる。 ここをコメントアウトすると挙動はイマイチいなるが落ちなくなる
+				;
+			}
+		};
+	};
+	
+	var defineFrame = function(thisFrame, prevFrame) {
+		var leftIsInput = thisFrame.left.map(_isInput);
+		var leftIsStrike = thisFrame.left.map(_isStrike);
+		var rightIsEnabled = leftIsInput.and(leftIsStrike.not());
+		var rightIsInput = thisFrame.right.map(_isInput);
+		
+		thisFrame.fixed = leftIsStrike.or(rightIsEnabled.and(rightIsInput));
+		
+		prevFrame.fixed.onValue(_enableSelect(thisFrame.$left));
+		rightIsEnabled.onValue(_enableSelect(thisFrame.$right));
+		thisFrame.left.filter(_isNumber).onValue(_createUpdateRightOptions(thisFrame.$right));
+	};
+	var defineFrame10 = function(thisFrame, prevFrame) {
+		var leftIsInput = thisFrame.left.map(_isInput);
+		var leftIsStrike = thisFrame.left.map(_isStrike);
+		
+		var rightIsInput = thisFrame.right.map(_isInput);
+		var rightIsSpare = thisFrame.right.map(_isSpare);
+		
+		var finalIsEnabled = leftIsStrike.and(rightIsInput).or(rightIsSpare);
+		
+		prevFrame.fixed.onValue(_enableSelect(thisFrame.$left));
+		leftIsInput.onValue(_enableSelect(thisFrame.$right));
+		finalIsEnabled.onValue(_enableSelect(thisFrame.$final));
+		
+		thisFrame.left.onValue(function(x) {
+			if (_isStrike(x)) {
+				updateOptions(thisFrame.$right, NORMAL_OPTIONS);
+			} else if (_isNumber(x)) {
+				var score = (x === 'G') ? 0 : parseInt(x, 10);
+				var values = ['', '-']
+					.concat(range(1, 9 - score))
+					.concat('/')
+					;
+				updateOptions(thisFrame.$right, values);
+			}
+		});
+		
+		thisFrame.left.combine(thisFrame.right, function(left, right) {
+			if (_isStrike(left) || _isSpare(right)) {
+				updateOptions(thisFrame.$final, NORMAL_OPTIONS);
+			}
+		});
+	};
+	
+	var _getVal = function(x) { return (!x || typeof x === 'function') ? null : x; };
+	var _parse = function(x) {
+		return (x === 'G' || x === '-') ? 0
+			: (x === 'X') ? 10
+			: parseInt(x, 10);
+	};
+	var _createScore = function(properties) {
+		return properties.map(function(args) {
+			var left1 = _getVal(args[0]);
+			var right1 = _getVal(args[1]);
+			var left2 = _getVal(args[2]);
+			var right2 = _getVal(args[3]);
+			var left3 = _getVal(args[4]);
+			
+			if (left1 === 'X' && left2 === 'X' && left3) {
+				return 20 + _parse(left3);
+			} else if (left1 === 'X' && left2 && right2 === '/') {
+				return 20;
+			} else if (left1 === 'X' && left2 && right2) {
+				return 10 + _parse(left2) + _parse(right2);
+			} else if (left1 && right1 === '/' && left2 === 'X') {
+				return 20;
+			} else if (left1 && right1 === '/') {
+				return 10 + _parse(left2);
+			} else if (left1 && right1) {
+				return _parse(left1) + _parse(right1);
+			} else {
+				return null;
+			}
+		});
+	};
+	var _createFrame10Score = function(properties) {
+		return properties.map(function(args) {
+			var left = _getVal(args[0]);
+			var right = _getVal(args[1]);
+			var final = _getVal(args[2]);
+			
+			if (left === 'X' && right && final) {
+				return 10 + _parse(right) + _parse(final);
+			} else if (left && right === '/' && final) {
+				return 10 + _parse(final);
+			} else if (left && right) {
+				return _parse(left) + _parse(right);
+			} else {
+				return null;
+			}
+		});
+	};
+	
+	
+	var _isInput = function(x) { return x && x.length > 0; };
+	var _isStrike = function(x) { return x === 'X'; };
+	var _isSpare = function(x) { return x === '/'; };
+	var _isNumber = function(x) { return /[G1-9]/.test(x); }
+	
+	
+	// select 要素および bacon property の取得
+	var frames = {};
+	frames['1']  = { $left: $('#frame1_left'),  $right: $('#frame1_right') };
+	frames['2']  = { $left: $('#frame2_left'),  $right: $('#frame2_right') };
+	frames['3']  = { $left: $('#frame3_left'),  $right: $('#frame3_right') };
+	frames['4']  = { $left: $('#frame4_left'),  $right: $('#frame4_right') };
+	frames['5']  = { $left: $('#frame5_left'),  $right: $('#frame5_right') };
+	frames['6']  = { $left: $('#frame6_left'),  $right: $('#frame6_right') };
+	frames['7']  = { $left: $('#frame7_left'),  $right: $('#frame7_right') };
+	frames['8']  = { $left: $('#frame8_left'),  $right: $('#frame8_right') };
+	frames['9']  = { $left: $('#frame9_left'),  $right: $('#frame9_right') };
+	frames['10'] = { $left: $('#frame10_left'), $right: $('#frame10_right'), $final: $('#frame10_final') };
+	
+	$.each(range(1, 10), function(i, x) {
+		var frame = frames[x];
+		$.each(['left', 'right', 'final'], function(j, pos) {
+			if (frame['$' + pos]) {
+				frame[pos] = _getSelectProperty(frame['$' + pos]);
+			}
+		});
+
+	});
+	$.each([
+		 frames['1'].$left
+		,frames['2'].$left
+		,frames['3'].$left
+		,frames['4'].$left
+		,frames['5'].$left
+		,frames['6'].$left
+		,frames['7'].$left
+		,frames['8'].$left
+		,frames['9'].$left
+		,frames['10'].$left
+		,frames['10'].$final
+		], function(i, $x) {
+		updateOptions($x, NORMAL_OPTIONS);
+	});
+	
+	
+	
+	// select 要素の振る舞い
+	defineFrame(frames['1'], { fixed: { onValue : function() {} }});
+	defineFrame(frames['2'], frames['1']);
+	defineFrame(frames['3'], frames['2']);
+	defineFrame(frames['4'], frames['3']);
+	defineFrame(frames['5'], frames['4']);
+	defineFrame(frames['6'], frames['5']);
+	defineFrame(frames['7'], frames['6']);
+	defineFrame(frames['8'], frames['7']);
+	defineFrame(frames['9'], frames['8']);
+	defineFrame10(frames['10'], frames['9']);
+	
+	
+	// score の振る舞い
+	frames['1'].score  = _createScore(Bacon.combineAsArray(frames['1'].left, frames['1'].right, frames['2'].left,  frames['2'].right,  frames['3'].left  ));
+	frames['2'].score  = _createScore(Bacon.combineAsArray(frames['2'].left, frames['2'].right, frames['3'].left,  frames['3'].right,  frames['4'].left  )).combine(frames['1'].score, function(here, prev) { return (!here || !prev) ? null : prev + here; });
+	frames['3'].score  = _createScore(Bacon.combineAsArray(frames['3'].left, frames['3'].right, frames['4'].left,  frames['4'].right,  frames['5'].left  )).combine(frames['2'].score, function(here, prev) { return (!here || !prev) ? null : prev + here; });
+	frames['4'].score  = _createScore(Bacon.combineAsArray(frames['4'].left, frames['4'].right, frames['5'].left,  frames['5'].right,  frames['6'].left  )).combine(frames['3'].score, function(here, prev) { return (!here || !prev) ? null : prev + here; });
+	frames['5'].score  = _createScore(Bacon.combineAsArray(frames['5'].left, frames['5'].right, frames['6'].left,  frames['6'].right,  frames['7'].left  )).combine(frames['4'].score, function(here, prev) { return (!here || !prev) ? null : prev + here; });
+	frames['6'].score  = _createScore(Bacon.combineAsArray(frames['6'].left, frames['6'].right, frames['7'].left,  frames['7'].right,  frames['6'].left  )).combine(frames['5'].score, function(here, prev) { return (!here || !prev) ? null : prev + here; });
+	frames['7'].score  = _createScore(Bacon.combineAsArray(frames['7'].left, frames['7'].right, frames['8'].left,  frames['8'].right,  frames['9'].left  )).combine(frames['6'].score, function(here, prev) { return (!here || !prev) ? null : prev + here; });
+	frames['8'].score  = _createScore(Bacon.combineAsArray(frames['8'].left, frames['8'].right, frames['9'].left,  frames['9'].right,  frames['10'].left )).combine(frames['7'].score, function(here, prev) { return (!here || !prev) ? null : prev + here; });
+	frames['9'].score  = _createScore(Bacon.combineAsArray(frames['9'].left, frames['9'].right, frames['10'].left, frames['10'].right, frames['10'].final)).combine(frames['8'].score, function(here, prev) { return (!here || !prev) ? null : prev + here; });
+	frames['10'].score = _createFrame10Score(Bacon.combineAsArray(frames['10'].left, frames['10'].right, frames['10'].final)).combine(frames['9'].score, function(here, prev) { return (!here || !prev) ? null : prev + here; });
+	
+	frames['1'].score.map(function(x) { return x ? x : ''; }).assign($('#score1'), 'text');
+	frames['2'].score.map(function(x) { return x ? x : ''; }).assign($('#score2'), 'text');
+	frames['3'].score.map(function(x) { return x ? x : ''; }).assign($('#score3'), 'text');
+	frames['4'].score.map(function(x) { return x ? x : ''; }).assign($('#score4'), 'text');
+	frames['5'].score.map(function(x) { return x ? x : ''; }).assign($('#score5'), 'text');
+	frames['6'].score.map(function(x) { return x ? x : ''; }).assign($('#score6'), 'text');
+	frames['7'].score.map(function(x) { return x ? x : ''; }).assign($('#score7'), 'text');
+	frames['8'].score.map(function(x) { return x ? x : ''; }).assign($('#score8'), 'text');
+	frames['9'].score.map(function(x) { return x ? x : ''; }).assign($('#score9'), 'text');
+	frames['10'].score.map(function(x) { return x ? x : ''; }).assign($('#score10'), 'text');
+	
+	
+	// 初期化
+	$('#clear').bind('click', function() {
+		frames[10].$final.val('').change();
+		frames[10].$right.val('').change();
+		frames[10].$left .val('').change();
+		frames[9] .$right.val('').change();
+		frames[9] .$left .val('').change();
+		frames[8] .$right.val('').change();
+		frames[8] .$left .val('').change();
+		frames[7] .$right.val('').change();
+		frames[7] .$left .val('').change();
+		frames[6] .$right.val('').change();
+		frames[6] .$left .val('').change();
+		frames[5] .$right.val('').change();
+		frames[5] .$left .val('').change();
+		frames[4] .$right.val('').change();
+		frames[4] .$left .val('').change();
+		frames[3] .$right.val('').change();
+		frames[3] .$left .val('').change();
+		frames[2] .$right.val('').change();
+		frames[2] .$left .val('').change();
+		frames[1] .$right.val('').change();
+		frames[1] .$left .val('').change();
+	});
+	
+	// 暫定初期値
+	(function() {
+		var setTekitou = function() {
+			frames[1] .$left .val('9').change();
+			frames[1] .$right.val('-').change();
+			frames[2] .$left .val('9').change();
+			frames[2] .$right.val('-').change();
+			frames[3] .$left .val('5').change();
+			frames[3] .$right.val('-').change();
+			frames[4] .$left .val('G').change();
+			frames[4] .$right.val('8').change();
+			frames[5] .$left .val('9').change();
+			frames[5] .$right.val('/').change();
+			frames[6] .$left .val('X').change();
+			frames[7] .$left .val('8').change();
+			frames[7] .$right.val('-').change();
+			frames[8] .$left .val('9').change();
+			frames[8] .$right.val('-').change();
+			frames[9] .$left .val('6').change();
+			frames[9] .$right.val('-').change();
+			frames[10].$left .val('1').change();
+			frames[10].$right.val('5').change();
+		};
+		setTekitou();
+	})();
+});
+</script>
+</body>
+</html>
